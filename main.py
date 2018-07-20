@@ -59,5 +59,3 @@ def main(_):
             if not vgan.load(FLAGS.checkpoint_dir)[0]:
                 raise Exception("[!] Train the model first")
         
-        OPTION = 1
-        visualize(sess, vgan, FLAGS, OPTION)
