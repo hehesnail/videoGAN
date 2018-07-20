@@ -105,14 +105,20 @@ class VGAN(object):
         for epoch in range(config.epoch):
             self.data = load_data(self.dataset, self.input_fname_pattern)
             batch_idxs = len(self.data) // config.batch_size
-            for idx in range(0, batch_idxs):
-                batch_files = self.data[idx*config.batch_size:(idx+1)*config.batch_size]
+            for idx in range(0, batch_idxs-1):
+                batch_files = self.data[idx*config.batch_size : (idx+1)*config.batch_size]
+                video_files = self.data[idx*config.batch_size : (idx+1)*config.batch_size+32]
                 batch = [get_image(batch_file, resize_h=self.output_height, 
                                 resize_w=self.output_width) for batch_file in batch_files]
                 #batch images: [N, 64, 64 ,3]
                 batch_images = np.array(batch).astype(np.float32)
                 #batch videos: [N, 32, 64, 64, 3]
-                batch_videos = None
+                batch_videos = np.zeros(self.batch_size, self.depth, self.output_height, self.output_width, 3)
+                for i in range(self.batch_size):
+                    for j in range(self.depth):
+                        batch_videos[i, j, :, :, :] = get_image(video_files[i+j], resize_h=self.output_height, 
+                                                               resize_w=self.output_width)
+                batch_videos = read_and_process_video(batch_files,self.batch_size,self.depth)
                 #update the discriminator
                 for i in range(self.critic):
                     _, summary_str = self.sess.run([d_optim, self.d_sum],
@@ -128,6 +134,19 @@ class VGAN(object):
                         })
                 errD = self.d_loss.eval({self.frames:batch_images, self.real_video:batch_videos})
                 errG = self.g_loss.eval({self.frames:batch_images})
+
+                counter += 1
+                print("Epoch: [%2d] [%4d/%4d] time: %4.4f, d_loss: %.8f, g_loss: %.8f" \
+                      % (epoch, idx, batch_idxs, time.time()-start_time, errD, errG))
+                if np.mod(counter, 100) == 1:
+                    predicted_frames, d_loss, g_loss = self.sess.run(
+                        [self.predictor, self.d_loss, self.g_loss], feed_dict={self.frames:batch_images})
+                    #predicted_frames [N, 32, 64, 64, 3]
+                    process_and_write_video(predicted_frames, "videos"+counter, config.sample_dir)
+                    print("Writing videos...")
+                    print("[Sample] d_loss: %.8f, g_loss: %.8f" % (d_loss, g_loss))
+                if np.mod(counter, 1000) == 1:
+                    self.save(config.checkpoint_dir, counter)
 
     
     def discriminator(self, vid, reuse=False):
