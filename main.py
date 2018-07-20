@@ -23,7 +23,6 @@ flags.DEFINE_string("input_fname_pattern", "*.jpeg", "Glob patterm of filename o
 flags.DEFINE_string("checkpoint_dir", "checkpoint", "Dir for the model checkpoint")
 flags.DEFINE_string("sample_dir", "samples", "Dir to save generated images and videos")
 flags.DEFINE_boolean("train", False, "True to train the model")
-flags.DEFINE_boolean("crop", False, "True to center crop the input images")
 FLAGS = flags.FLAGS
 
 def main(_):
@@ -49,7 +48,7 @@ def main(_):
                     output_width=FLAGS.output_width, batch_size=FLAGS.batch_size,
                     dataset=FLAGS.dataset, z_dim=FLAGS.zdim, lam=FLAGS.lam,
                     input_fname_pattern=FLAGS.input_fname_pattern,
-                    crop=FLAGS.crop, checkpoint_dir=FLAGS.checkpoint_dir,
+                    checkpoint_dir=FLAGS.checkpoint_dir,
                     sample_dir=FLAGS.sample_dir)
         
         show_all_variables()
