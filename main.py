@@ -33,14 +33,14 @@ def main(_):
         FLAGS.input_width = FLAGS.input_height
     if FLAGS.output_width == None:
         FLAGS.output_width = FLAGS.output_height
-    
+
     if not os.path.exists(FLAGS.checkpoint_dir):
         os.makedirs(FLAGS.checkpoint_dir)
     if not os.path.exists(FLAGS.sample_dir):
         os.makedirs(FLAGS.sample_dir)
-    
+
     config = tf.ConfigProto()
-    #config.gpu_options.allow_growth = True
+    config.gpu_options.allow_growth = True
 
     with tf.Session(config=config) as sess:
         vgan = VGAN(sess, depth=FLAGS.depth, input_height=FLAGS.input_height,
@@ -50,7 +50,7 @@ def main(_):
                     input_fname_pattern=FLAGS.input_fname_pattern,
                     checkpoint_dir=FLAGS.checkpoint_dir,
                     sample_dir=FLAGS.sample_dir)
-        
+
         show_all_variables()
 
         if FLAGS.train:
@@ -58,4 +58,6 @@ def main(_):
         else:
             if not vgan.load(FLAGS.checkpoint_dir)[0]:
                 raise Exception("[!] Train the model first")
-        
+
+if __name__ == '__main__':
+    tf.app.run()

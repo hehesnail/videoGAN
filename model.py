@@ -30,10 +30,12 @@ class VGAN(object):
         self.input_fname_pattern = input_fname_pattern
         self.checkpoint_dir = checkpoint_dir
         self.sample_dir = sample_dir
-        
+
+        self.build_model()
+
     def build_model(self):
-        self.frames = tf.placeholder(tf.float32, [None, self.output_height, self.output_width, 3]) #[N,H,W,3]
-        self.real_video = tf.placeholder(tf.float32, [None] + self.video_dim) #[N,D,H,W,3]
+        self.frames = tf.placeholder(tf.float32, [self.batch_size, self.output_height, self.output_width, 3]) #[N,H,W,3]
+        self.real_video = tf.placeholder(tf.float32, [self.batch_size] + self.video_dim) #[N,D,H,W,3]
 
         self.fake_video, self.foreground, self.background, self.mask, self.gen_reg = self.generator(self.frames)
         self.sample_video = self.predictor(self.frames)
@@ -45,7 +47,7 @@ class VGAN(object):
 
         self.g_loss_pure = -tf.reduce_mean(self.fake_logits)
         self.g_loss = self.g_loss_pure + self.lam*self.gen_reg
-        
+
         self.g_loss_pure_sum = scalar_summary("g_loss_pure", self.g_loss_pure)
         self.gen_reg_sum = scalar_summary("gen_reg", self.gen_reg)
         self.g_loss_sum = scalar_summary("g_loss", self.g_loss)
@@ -53,14 +55,14 @@ class VGAN(object):
         self.d_loss_fake = tf.reduce_mean(self.fake_logits)
         self.d_loss_real = tf.reduce_mean(self.real_logits)
         self.d_loss = self.d_loss_fake - self.d_loss_real
-        
+
         alpha = tf.random_uniform(shape=[self.batch_size, 1], minval=0.0, maxval=1.0)
         dim = self.depth * self.input_height * self.input_width * 3
         vid = tf.reshape(self.real_video, [self.batch_size, dim])
         fake = tf.reshape(self.fake_video, [self.batch_size, dim])
         differences = fake - vid
         x_hat = vid + (alpha * differences)
-        d_hat, _ = self.discriminator(tf.reshape(x_hat, [self.batch_size]+self.video_dim), reuse=True) 
+        d_hat, _ = self.discriminator(tf.reshape(x_hat, [self.batch_size]+self.video_dim), reuse=True)
         gradients = tf.gradients(d_hat, [x_hat])[0]
         slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), reduction_indices=[1]))
         gradient_pen = tf.reduce_mean((slopes - 1.0)**2)
@@ -80,17 +82,16 @@ class VGAN(object):
 
     def train(self, config):
         #TODO
-        d_optim = tf.train.AdamOptimizer(0.0004, beta1=0.0, beta2=0.9) \
+        d_optim = tf.train.AdamOptimizer(0.0002, beta1=0.5, beta2=0.9) \
                     .minimize(self.d_loss, var_list=self.d_vars)
-        g_optim = tf.train.AdamOptimizer(0.0001, beta1=0.0, beta2=0.9) \
+        g_optim = tf.train.AdamOptimizer(0.0002, beta1=0.5, beta2=0.9) \
                     .minimize(self.g_loss, var_list=self.g_vars)
-        
+
         tf.global_variables_initializer().run()
 
-        self.g_sum = merge_summary([self.g_loss_pure_sum, self.gen_reg_sum, 
+        self.g_sum = merge_summary([self.g_loss_pure_sum, self.gen_reg_sum,
                         self.g_loss_sum, self.d_fake_sum])
-        self.d_sum = merge_summary([self.d_loss_sum, self.d_loss_real_sum, 
-                        self.d_loss_real_sum])
+        self.d_sum = merge_summary([self.d_loss_sum, self.d_real_sum])
         self.writer = SummaryWriter("./logs", self.sess.graph)
 
         counter = 1
@@ -101,24 +102,25 @@ class VGAN(object):
             print("[*] Load SUCCESS")
         else:
             print("[!] Load failed...")
-        
+
         for epoch in range(config.epoch):
             self.data = load_data(self.dataset, self.input_fname_pattern)
+            print(len(self.data))
             batch_idxs = len(self.data) // config.batch_size
             for idx in range(0, batch_idxs-1):
                 batch_files = self.data[idx*config.batch_size : (idx+1)*config.batch_size]
                 video_files = self.data[idx*config.batch_size : (idx+1)*config.batch_size+32]
-                batch = [get_image(batch_file, resize_h=self.output_height, 
+                batch = [get_image(batch_file, resize_h=self.output_height,
                                 resize_w=self.output_width) for batch_file in batch_files]
                 #batch images: [N, 64, 64 ,3]
                 batch_images = np.array(batch).astype(np.float32)
                 #batch videos: [N, 32, 64, 64, 3]
-                batch_videos = np.zeros(self.batch_size, self.depth, self.output_height, self.output_width, 3)
+                batch_videos = np.zeros((self.batch_size, self.depth, self.output_height, self.output_width, 3))
                 for i in range(self.batch_size):
                     for j in range(self.depth):
-                        batch_videos[i, j, :, :, :] = get_image(video_files[i+j], resize_h=self.output_height, 
+                        batch_videos[i, j, :, :, :] = get_image(video_files[i+j], resize_h=self.output_height,
                                                                resize_w=self.output_width)
-                batch_videos = read_and_process_video(batch_files,self.batch_size,self.depth)
+                #batch_videos = read_and_process_video(batch_files,self.batch_size,self.depth)
                 #update the discriminator
                 for i in range(self.critic):
                     _, summary_str = self.sess.run([d_optim, self.d_sum],
@@ -127,11 +129,13 @@ class VGAN(object):
                             self.real_video: batch_videos
                         })
                     self.writer.add_summary(summary_str, counter)
+
                 #update the G
                 _, summary_str = self.sess.run([g_optim, self.g_sum],
                         feed_dict={
                             self.frames:batch_images
                         })
+                self.writer.add_summary(summary_str, counter)
                 errD = self.d_loss.eval({self.frames:batch_images, self.real_video:batch_videos})
                 errG = self.g_loss.eval({self.frames:batch_images})
 
@@ -148,7 +152,7 @@ class VGAN(object):
                 if np.mod(counter, 1000) == 1:
                     self.save(config.checkpoint_dir, counter)
 
-    
+
     def discriminator(self, vid, reuse=False):
         """
         input:
@@ -172,7 +176,7 @@ class VGAN(object):
             d5 = linear(tf.reshape(d4, [self.batch_size, -1]), 1, name="d_lin") #[N, 1]
 
             return tf.nn.sigmoid(d5), d5
-            
+
     def generator(self, frames):
         """
         input:
@@ -230,7 +234,7 @@ class VGAN(object):
             gen_reg = tf.reduce_mean(tf.square(frames - video[:, 0, :, :, :]))
 
             return video, foreground, background, mask, gen_reg
-    
+
     def predictor(self, frames):
         """
         reuse the variables of the generator to predict the future frames
@@ -289,12 +293,12 @@ class VGAN(object):
             video = mask_rep*foreground + (1-mask_rep)*background_rep #[N, 32, 64, 64, 3]
 
             return video
-    
+
     @property
     def model_dir(self):
-        return "{}_{}_{}_{}".format(self.dataset, self.batch_size, 
+        return "{}_{}_{}_{}".format(self.dataset, self.batch_size,
                             self.output_height, self.output_width)
-    
+
     def save(self, checkpoint_dir, step):
         model_name = "VGAN.model"
         checkpoint_dir = os.path.join(checkpoint_dir, self.model_dir)
@@ -303,7 +307,7 @@ class VGAN(object):
             os.makedirs(checkpoint_dir)
         self.saver.save(self.sess, os.path.join(checkpoint_dir, model_name),
                         global_step=step)
-    
+
     def load(self, checkpoint_dir):
         import re
         print("[*] Reading checkpoints")
