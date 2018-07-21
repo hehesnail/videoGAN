@@ -57,11 +57,13 @@ class VGAN(object):
         self.d_loss = self.d_loss_fake - self.d_loss_real
 
         alpha = tf.random_uniform(shape=[self.batch_size, 1], minval=0.0, maxval=1.0)
-        dim = self.depth * self.input_height * self.input_width * 3
-        vid = tf.reshape(self.real_video, [self.batch_size, dim])
+        dim = self.depth * self.output_height * self.output_width * 3
+
+        real = tf.reshape(self.real_video, [self.batch_size, dim])
         fake = tf.reshape(self.fake_video, [self.batch_size, dim])
-        differences = fake - vid
-        x_hat = vid + (alpha * differences)
+
+        differences = fake - real
+        x_hat = fake + (alpha * differences)
         d_hat, _ = self.discriminator(tf.reshape(x_hat, [self.batch_size]+self.video_dim), reuse=True)
         gradients = tf.gradients(d_hat, [x_hat])[0]
         slopes = tf.sqrt(tf.reduce_sum(tf.square(gradients), reduction_indices=[1]))
@@ -165,13 +167,13 @@ class VGAN(object):
             if reuse:
                 scope.reuse_variables()
             d1 = conv3d(vid, 64, name="d_conv3d1") #[N, 16, 32, 32, 64]
-            d1 = lrelu(batch_norm(d1, is_training=True, name="d_bn1"))
+            d1 = lrelu(layer_norm(d1, is_training=True, name="d_ln1"))
             d2 = conv3d(d1, 128, name="d_conv3d2") #[N, 8, 16, 16, 128]
-            d2 = lrelu(batch_norm(d2, is_training=True, name="d_bn2"))
+            d2 = lrelu(layer_norm(d2, is_training=True, name="d_ln2"))
             d3 = conv3d(d2, 256, name="d_conv3d3") #[N, 4, 8, 8, 256]
-            d3 = lrelu(batch_norm(d3, is_training=True, name="d_bn3"))
+            d3 = lrelu(layer_norm(d3, is_training=True, name="d_ln3"))
             d4 = conv3d(d3, 512, name="d_conv3d4") #[N, 2, 4, 4, 512]
-            d4 = lrelu(batch_norm(d4, is_training=True, name="d_bn4"))
+            d4 = lrelu(layer_norm(d4, is_training=True, name="d_ln4"))
             #FC layer here may cause problems.
             d5 = linear(tf.reshape(d4, [self.batch_size, -1]), 1, name="d_lin") #[N, 1]
 
@@ -187,13 +189,13 @@ class VGAN(object):
         with tf.variable_scope("generator") as scope:
             #Encoder
             e1 = conv2d(frames, 128, name="e_conv2d1") #[N, 32, 32, 128]
-            e1 = tf.nn.relu(batch_norm(e1, is_training=True, name="e_bn1"))
+            e1 = tf.nn.relu(e1)
             e2 = conv2d(e1, 256, name="e_conv2d2") #[N, 16, 16, 256]
-            e2 = tf.nn.relu(batch_norm(e2, is_training=True, name="e_bn2"))
+            e2 = tf.nn.relu(batch_norm(e2, is_training=True, epsilon=1e-3, name="e_bn1"))
             e3 = conv2d(e2, 512, name="e_conv2d3") #[N, 8, 8, 512]
-            e3 = tf.nn.relu(batch_norm(e3, is_training=True, name="e_bn3"))
+            e3 = tf.nn.relu(batch_norm(e3, is_training=True, epsilon=1e-3, name="e_bn2"))
             e4 = conv2d(e3, 1024, name="e_conv2d4") #[N, 4, 4, 1024]
-            e4 = tf.nn.relu(batch_norm(e4, is_training=True, name="e_bn4"))
+            e4 = tf.nn.relu(batch_norm(e4, is_training=True, epsilon=1e-3, name="e_bn3"))
 
             #Generator
             #Forground stream
@@ -214,16 +216,14 @@ class VGAN(object):
             mask = tf.sigmoid(mask)
 
             #Background
-            gb1 = deconv2d(e4, [self.batch_size, 4, 4, 512], d_h=1, d_w=1, name="gb_deconv2d1") #[N,4,4,512]
+            gb1 = deconv2d(e4, [self.batch_size, 8, 8, 512], name="gb_deconv2d1") #[N,8,8,512]
             gb1 = tf.nn.relu(batch_norm(gb1, is_training=True, name="gb_bn1"))
-            gb2 = deconv2d(gb1, [self.batch_size, 8, 8, 256], name="gb_deconv2d2") #[N, 8, 8, 256]
+            gb2 = deconv2d(gb1, [self.batch_size, 16, 16, 256], name="gb_deconv2d2") #[N, 16, 16, 256]
             gb2 = tf.nn.relu(batch_norm(gb2, is_training=True, name="gb_bn2"))
-            gb3 = deconv2d(gb2, [self.batch_size, 16, 16, 128], name="gb_deconv2d3") #[N, 16, 16, 128]
+            gb3 = deconv2d(gb2, [self.batch_size, 32, 32, 128], name="gb_deconv2d3") #[N, 32, 32, 128]
             gb3 = tf.nn.relu(batch_norm(gb3, is_training=True, name="g_bn3"))
-            gb4 = deconv2d(gb3, [self.batch_size, 32, 32, 64], name="gb_deconv2d4") #[N, 32, 32, 64]
-            gb4 = tf.nn.relu(batch_norm(gb4, is_training=True, name="g_bn4"))
+            background = deconv2d(gb3, [self.batch_size, 64, 64, 3], name="gb_deconv2d4") #[N, 64, 64, 3]
 
-            background = deconv2d(gb4, [self.batch_size, 64, 64, 3], name="gb_deconv2d5") #[N, 64, 64, 3]
             background = tf.tanh(background)
             background = tf.expand_dims(background, axis=1) #[N, 1, 64, 64, 3]
 
@@ -247,23 +247,23 @@ class VGAN(object):
             scope.reuse_variables()
             #Encoder
             e1 = conv2d(frames, 128, name="e_conv2d1") #[N, 32, 32, 128]
-            e1 = tf.nn.relu(batch_norm(e1, is_training=True, name="e_bn1"))
+            e1 = tf.nn.relu(e1)
             e2 = conv2d(e1, 256, name="e_conv2d2") #[N, 16, 16, 256]
-            e2 = tf.nn.relu(batch_norm(e2, is_training=True, name="e_bn2"))
+            e2 = tf.nn.relu(batch_norm(e2, epsilon=1e-3, name="e_bn1"))
             e3 = conv2d(e2, 512, name="e_conv2d3") #[N, 8, 8, 512]
-            e3 = tf.nn.relu(batch_norm(e3, is_training=True, name="e_bn3"))
+            e3 = tf.nn.relu(batch_norm(e3, epsilon=1e-3, name="e_bn2"))
             e4 = conv2d(e3, 1024, name="e_conv2d4") #[N, 4, 4, 1024]
-            e4 = tf.nn.relu(batch_norm(e4, is_training=True, name="e_bn4"))
+            e4 = tf.nn.relu(batch_norm(e4, epsilon=1e-3, name="e_bn3"))
 
             #Generator
             #Forground stream
             z = tf.reshape(e4, shape=[self.batch_size, 2, 4, 4, 512]) #[N, 2, 4, 4, 512]
             gf1 = deconv3d(z, [self.batch_size, 4, 8, 8, 256], name="gf_deconv3d1") #[N, 4, 8, 8, 256]
-            gf1 = tf.nn.relu(batch_norm(gf1, is_training=True, name="gf_bn1"))
+            gf1 = tf.nn.relu(batch_norm(gf1, name="gf_bn1"))
             gf2 = deconv3d(gf1, [self.batch_size, 8, 16, 16, 128], name="gf_deconv3d2") #[N, 8, 16, 16, 128]
-            gf2 = tf.nn.relu(batch_norm(gf2, is_training=True, name="gf_bn2"))
+            gf2 = tf.nn.relu(batch_norm(gf2, name="gf_bn2"))
             gf3 = deconv3d(gf2, [self.batch_size, 16, 32, 32, 64], name="gf_deconv3d3") #[N, 16, 32, 32, 64]
-            gf3 = tf.nn.relu(batch_norm(gf3, is_training=True, name="gf_bn3"))
+            gf3 = tf.nn.relu(batch_norm(gf3, name="gf_bn3"))
 
             #Foreground video
             foreground = deconv3d(gf3, [self.batch_size, 32, 64, 64, 3], name="f_deconv3d") #[N, 32, 64, 64, 3]
@@ -274,16 +274,14 @@ class VGAN(object):
             mask = tf.sigmoid(mask)
 
             #Background
-            gb1 = deconv2d(e4, [self.batch_size, 4, 4, 512], d_h=1, d_w=1, name="gb_deconv2d1") #[N,4,4,512]
-            gb1 = tf.nn.relu(batch_norm(gb1, is_training=True, name="gb_bn1"))
-            gb2 = deconv2d(gb1, [self.batch_size, 8, 8, 256], name="gb_deconv2d2") #[N, 8, 8, 256]
-            gb2 = tf.nn.relu(batch_norm(gb2, is_training=True, name="gb_bn2"))
-            gb3 = deconv2d(gb2, [self.batch_size, 16, 16, 128], name="gb_deconv2d3") #[N, 16, 16, 128]
-            gb3 = tf.nn.relu(batch_norm(gb3, is_training=True, name="g_bn3"))
-            gb4 = deconv2d(gb3, [self.batch_size, 32, 32, 64], name="gb_deconv2d4") #[N, 32, 32, 64]
-            gb4 = tf.nn.relu(batch_norm(gb4, is_training=True, name="g_bn4"))
+            gb1 = deconv2d(e4, [self.batch_size, 8, 8, 512], name="gb_deconv2d1") #[N,8,8,512]
+            gb1 = tf.nn.relu(batch_norm(gb1, name="gb_bn1"))
+            gb2 = deconv2d(gb1, [self.batch_size, 16, 16, 256], name="gb_deconv2d2") #[N, 16, 16, 256]
+            gb2 = tf.nn.relu(batch_norm(gb2, name="gb_bn2"))
+            gb3 = deconv2d(gb2, [self.batch_size, 32, 32, 128], name="gb_deconv2d3") #[N, 32, 32, 128]
+            gb3 = tf.nn.relu(batch_norm(gb3, name="g_bn3"))
+            background = deconv2d(gb3, [self.batch_size, 64, 64, 3], name="gb_deconv2d4") #[N, 64, 64, 3]
 
-            background = deconv2d(gb4, [self.batch_size, 64, 64, 3], name="gb_deconv2d5") #[N, 64, 64, 3]
             background = tf.tanh(background)
             background = tf.expand_dims(background, axis=1) #[N, 1, 64, 64, 3]
 

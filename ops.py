@@ -166,7 +166,7 @@ def linear(x, output_size, name="linear",
 """
 Batch normlization
 """
-def batch_norm(x, is_training, momentum=0.9, epsilon=1e-5, name="batch_norm"):
+def batch_norm(x, is_training=False, momentum=0.9, epsilon=1e-5, name="batch_norm"):
     return tf.contrib.layers.batch_norm(x,
                                         decay=momentum,
                                         center=True,
