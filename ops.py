@@ -14,7 +14,17 @@ def concat(tensors, axis, *args, **kwargs):
     return tf.concat(tensors, axis, *args, **kwargs)
 
 """
+Used for He initializer
+"""
+def uniform(std_dev, size):
+    return np.random.uniform(
+            low=-std_dev * np.sqrt(3),
+            high=std_dev * np.sqrt(3),
+            size=size
+            ).astype(np.float32)
+"""
 conv2d for downsampling
+Using He initialization
 """
 def conv2d(x, output_dim,
         k_h=4, k_w=4, d_h=2, d_w=2, stddev = 0.02,
@@ -30,8 +40,17 @@ def conv2d(x, output_dim,
         x: [N, H/d_h, W/d_w, output_dim]
     """
     with tf.variable_scope(name) as scope:
-        w = tf.get_variable("w", [k_h, k_w, x.get_shape()[-1], output_dim],
-                        initializer=tf.truncated_normal_initializer(stddev=stddev))
+        input_dim = x.get_shape().as_list()[-1]
+        fan_in = input_dim * k_h *k_w
+        fan_out = (output_dim*k_h*k_w) / (d_h*d_w)
+
+        filters_std = np.sqrt(4. / (fan_in+fan_out))
+
+        filter_values = uniform(filters_std, (k_h, k_w, input_dim, output_dim))
+
+        w_init = tf.Variable(filter_values, name="filters_init")
+
+        w = tf.get_variable("w",initializer=w_init.initialized_value())
         if sn:
             w = sepctral_norm(w)
         conv = tf.nn.conv2d(x, w, strides=[1, d_h, d_w, 1], padding=padding)
@@ -46,6 +65,7 @@ def conv2d(x, output_dim,
 
 """
 conv3d for downsampling
+Using He initializetion
 """
 def conv3d(x, output_dim,
         k_d=4, k_h=4, k_w=4, d_d=2, d_h=2, d_w=2, stddev = 0.02,
@@ -60,8 +80,16 @@ def conv3d(x, output_dim,
         x: [N, D/d_d, H/d_h, W/d_w, output_dim]
     """
     with tf.variable_scope(name) as scope:
-        w = tf.get_variable("w", [k_d, k_h, k_w, x.get_shape()[-1], output_dim],
-                        initializer=tf.truncated_normal_initializer(stddev=stddev))
+        input_dim = x.get_shape().as_list()[-1]
+        fan_in = input_dim*k_d*k_h*k_w
+        fan_out = (output_dim*k_d*k_h*k_w) / (d_d*d_h*d_w)
+
+        filters_std = np.sqrt(4. / (fan_in + fan_out))
+        filter_values = uniform(filters_std, (k_d, k_h, k_w, input_dim, output_dim))
+
+        w_init = tf.Variable(filter_values, name="filters_init")
+
+        w = tf.get_variable("w", initializer=w_init.initialized_value())
         conv = tf.nn.conv3d(x, w, strides=[1, d_d, d_h, d_w, 1], padding=padding)
         biases = tf.get_variable("biases", [output_dim],
                                 initializer=tf.constant_initializer(0.0))
@@ -74,6 +102,7 @@ def conv3d(x, output_dim,
 
 """
 deconv2d for upsampling
+Using He initialization
 """
 def deconv2d(x, output_shape,
             k_h=4, k_w=4, d_h=2, d_w=2, stddev=0.02,
@@ -90,8 +119,19 @@ def deconv2d(x, output_shape,
     """
     with tf.variable_scope(name) as scope:
         #filter: [k_h, k_w, out_c, in_c]
-        w = tf.get_variable("w", [k_h, k_w, output_shape[-1], x.get_shape()[-1]],
-                            initializer=tf.truncated_normal_initializer(stddev=stddev))
+        input_dim = x.get_shape().as_list()[-1]
+        output_dim = output_shape[-1]
+
+        fan_in = input_dim * k_h * k_w
+        fan_out = (output_dim*k_h*k_w) / (d_h*d_w)
+
+        filters_std = np.sqrt(4. / (fan_in + fan_out))
+
+        filter_values = uniform(filters_std, (k_h, k_w, output_dim, input_dim))
+
+        w_init = tf.Variable(filter_values, name="filters_init")
+
+        w = tf.get_variable("w", initializer=w_init.initialized_value())
         if sn:
             w = sepctral_norm(w)
         deconv = tf.nn.conv2d_transpose(x, w, output_shape=output_shape,
@@ -107,6 +147,7 @@ def deconv2d(x, output_shape,
 
 """
 deconv3d for upsampling
+Using He initialization
 """
 def deconv3d(x, output_shape,
             k_d=4, k_h=4, k_w=4, d_d=2, d_h=2, d_w=2, stddev=0.02,
@@ -121,9 +162,20 @@ def deconv3d(x, output_shape,
         deconv feature map with shape as output_shape
     """
     with tf.variable_scope(name) as scope:
+        input_dim = x.get_shape().as_list()[-1]
+        output_dim = output_shape[-1]
+
+        fan_in = input_dim * k_d * k_h * k_w
+        fan_out = (output_dim * k_d * k_h * k_w) / (d_d * d_w * d_h)
+
+        filters_std = np.sqrt(4./(fan_in + fan_out))
+
+        filter_values = uniform(filters_std, (k_d, k_h, k_w, output_dim, input_dim))
+
+        w_init = tf.Variable(filter_values, name="filters_init")
+
         #filter: [k_d, k_h, k_w, out_c, in_c]
-        w = tf.get_variable("w", [k_d, k_h, k_w, output_shape[-1], x.get_shape()[-1]],
-                            initializer=tf.truncated_normal_initializer(stddev=stddev))
+        w = tf.get_variable("w", initializer=w_init.initialized_value())
         deconv = tf.nn.conv3d_transpose(x, w, output_shape=output_shape,
                             strides=[1,d_d,d_h,d_w,1], padding=padding)
         biases = tf.get_variable("biases", [output_shape[-1]],
